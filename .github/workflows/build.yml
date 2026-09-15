@@ -78,43 +78,61 @@ jobs:
           echo "=== ZIP Header ==="
           xxd -l 32 project.zip
 
-      # =========================================================
+            # =========================================================
       # EXTRACT
       # =========================================================
       - name: Extract ZIP
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
           echo "=========================================="
           echo "          EXTRACT PROJECT"
           echo "=========================================="
 
-          if ! unzip -t project.zip >/dev/null 2>&1; then
-            echo "❌ File bukan ZIP valid!"
+          echo ""
+          echo "=== File Info ==="
+          ls -lh project.zip
+
+          echo ""
+          echo "=== File Type ==="
+          file project.zip
+
+          echo ""
+          echo "=== TEST ZIP ==="
+
+          if ! unzip -t project.zip; then
+            echo ""
+            echo "❌ ZIP GAGAL DIVERIFIKASI!"
+            echo ""
+            echo "=== HEADER ==="
+            xxd -l 32 project.zip || true
+            echo ""
+            echo "=== FILE INFO ==="
             file project.zip
             exit 1
           fi
 
-          echo "✅ ZIP valid"
+          echo ""
+          echo "✅ ZIP VALID"
 
           rm -rf project_raw
           mkdir -p project_raw
 
-          unzip -q project.zip -d project_raw
+          echo ""
+          echo "=== EXTRACTING ==="
+
+          unzip -o project.zip -d project_raw
 
           echo ""
-          echo "=== Struktur awal ==="
-          find project_raw -maxdepth 3 -type f | head -100
+          echo "✅ EXTRACT BERHASIL"
 
-          # -----------------------------------------------------
-          # Cari project root
-          # Bisa:
-          # project_raw/pubspec.yaml
-          # project_raw/app/build.gradle
-          # project_raw/android/gradlew
-          # project_raw/sesuatu/pubspec.yaml
-          # -----------------------------------------------------
+          echo ""
+          echo "=== STRUKTUR PROJECT ==="
+          find project_raw -maxdepth 3 -type f -print | head -100
+
+          echo ""
+          echo "=== CARI PROJECT ROOT ==="
 
           PROJECT_DIR=""
 
@@ -122,31 +140,49 @@ jobs:
           if [ -f "project_raw/pubspec.yaml" ]; then
             PROJECT_DIR="project_raw"
 
-          # Kalau ZIP berisi satu folder
-          elif find project_raw -mindepth 2 -maxdepth 2 -name "pubspec.yaml" \
+          # Flutter berada di dalam folder
+          elif find project_raw \
+              -mindepth 2 \
+              -maxdepth 4 \
+              -type f \
+              -name "pubspec.yaml" \
               -print -quit | grep -q .; then
 
-            PROJECT_DIR=$(find project_raw -mindepth 2 -maxdepth 2 \
+            PUBSPEC=$(find project_raw \
+              -mindepth 2 \
+              -maxdepth 4 \
+              -type f \
               -name "pubspec.yaml" \
-              -print -quit | xargs dirname)
+              -print -quit)
+
+            PROJECT_DIR=$(dirname "$PUBSPEC")
 
           # Gradle root langsung
           elif [ -f "project_raw/gradlew" ]; then
             PROJECT_DIR="project_raw"
 
           # Gradle berada di dalam folder
-          elif find project_raw -name "gradlew" -type f \
+          elif find project_raw \
+              -type f \
+              -name "gradlew" \
               -print -quit | grep -q .; then
 
-            GRADLEW=$(find project_raw -name "gradlew" -type f \
+            GRADLEW=$(find project_raw \
+              -type f \
+              -name "gradlew" \
               -print -quit)
 
             PROJECT_DIR=$(dirname "$GRADLEW")
 
           else
-            echo "❌ Tidak menemukan pubspec.yaml maupun gradlew!"
             echo ""
-            echo "=== Struktur project ==="
+            echo "❌ TIDAK MENEMUKAN PROJECT!"
+            echo ""
+            echo "Mencari:"
+            echo "  - pubspec.yaml"
+            echo "  - gradlew"
+            echo ""
+            echo "=== STRUKTUR LENGKAP ==="
             find project_raw -maxdepth 5 -print
             exit 1
           fi
@@ -156,6 +192,14 @@ jobs:
           echo "PROJECT ROOT:"
           echo "$PROJECT_DIR"
           echo "=========================================="
+
+          if [ -f "$PROJECT_DIR/pubspec.yaml" ]; then
+            echo "✅ pubspec.yaml ditemukan"
+          fi
+
+          if [ -f "$PROJECT_DIR/gradlew" ]; then
+            echo "✅ gradlew ditemukan"
+          fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
