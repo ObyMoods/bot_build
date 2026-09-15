@@ -52,7 +52,7 @@ jobs:
       - name: Download ZIP project
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
           echo "=========================================="
           echo "        DOWNLOAD PROJECT ZIP"
@@ -78,8 +78,8 @@ jobs:
           echo "=== ZIP Header ==="
           xxd -l 32 project.zip
 
-            # =========================================================
-      # EXTRACT
+      # =========================================================
+      # EXTRACT ZIP
       # =========================================================
       - name: Extract ZIP
         shell: bash
@@ -91,11 +91,11 @@ jobs:
           echo "=========================================="
 
           echo ""
-          echo "=== File Info ==="
+          echo "=== FILE INFO ==="
           ls -lh project.zip
 
           echo ""
-          echo "=== File Type ==="
+          echo "=== FILE TYPE ==="
           file project.zip
 
           echo ""
@@ -105,10 +105,10 @@ jobs:
             echo ""
             echo "❌ ZIP GAGAL DIVERIFIKASI!"
             echo ""
-            echo "=== HEADER ==="
+            echo "=== ZIP HEADER ==="
             xxd -l 32 project.zip || true
             echo ""
-            echo "=== FILE INFO ==="
+            echo "=== FILE TYPE ==="
             file project.zip
             exit 1
           fi
@@ -120,7 +120,7 @@ jobs:
           mkdir -p project_raw
 
           echo ""
-          echo "=== EXTRACTING ==="
+          echo "=== EXTRACTING ZIP ==="
 
           unzip -o project.zip -d project_raw
 
@@ -128,63 +128,96 @@ jobs:
           echo "✅ EXTRACT BERHASIL"
 
           echo ""
-          echo "=== STRUKTUR PROJECT ==="
-          find project_raw -maxdepth 3 -type f -print | head -100
+          echo "=== STRUKTUR AWAL ==="
+
+          # Jangan menggunakan head langsung setelah find.
+          # head dapat menyebabkan Broken Pipe.
+          find project_raw \
+            -maxdepth 3 \
+            -type f \
+            -print | sed -n '1,100p'
 
           echo ""
-          echo "=== CARI PROJECT ROOT ==="
+          echo "=== MENCARI PROJECT ROOT ==="
 
           PROJECT_DIR=""
 
-          # Flutter root langsung
+          # -----------------------------------------------------
+          # FLUTTER ROOT LANGSUNG
+          # -----------------------------------------------------
           if [ -f "project_raw/pubspec.yaml" ]; then
+
             PROJECT_DIR="project_raw"
 
-          # Flutter berada di dalam folder
-          elif find project_raw \
-              -mindepth 2 \
-              -maxdepth 4 \
-              -type f \
-              -name "pubspec.yaml" \
-              -print -quit | grep -q .; then
+          # -----------------------------------------------------
+          # FLUTTER DI DALAM FOLDER
+          # -----------------------------------------------------
+          else
 
             PUBSPEC=$(find project_raw \
               -mindepth 2 \
-              -maxdepth 4 \
+              -maxdepth 5 \
               -type f \
               -name "pubspec.yaml" \
-              -print -quit)
+              -print -quit || true)
 
-            PROJECT_DIR=$(dirname "$PUBSPEC")
+            if [ -n "$PUBSPEC" ]; then
 
-          # Gradle root langsung
-          elif [ -f "project_raw/gradlew" ]; then
+              PROJECT_DIR=$(dirname "$PUBSPEC")
+
+            fi
+
+          fi
+
+          # -----------------------------------------------------
+          # GRADLE ROOT LANGSUNG
+          # -----------------------------------------------------
+          if [ -z "$PROJECT_DIR" ] && [ -f "project_raw/gradlew" ]; then
+
             PROJECT_DIR="project_raw"
 
-          # Gradle berada di dalam folder
-          elif find project_raw \
-              -type f \
-              -name "gradlew" \
-              -print -quit | grep -q .; then
+          fi
+
+          # -----------------------------------------------------
+          # GRADLE DI DALAM FOLDER
+          # -----------------------------------------------------
+          if [ -z "$PROJECT_DIR" ]; then
 
             GRADLEW=$(find project_raw \
               -type f \
               -name "gradlew" \
-              -print -quit)
+              -print -quit || true)
 
-            PROJECT_DIR=$(dirname "$GRADLEW")
+            if [ -n "$GRADLEW" ]; then
 
-          else
+              PROJECT_DIR=$(dirname "$GRADLEW")
+
+            fi
+
+          fi
+
+          # -----------------------------------------------------
+          # VALIDASI
+          # -----------------------------------------------------
+          if [ -z "$PROJECT_DIR" ]; then
+
             echo ""
-            echo "❌ TIDAK MENEMUKAN PROJECT!"
+            echo "❌ PROJECT TIDAK DITEMUKAN!"
+
             echo ""
             echo "Mencari:"
-            echo "  - pubspec.yaml"
-            echo "  - gradlew"
+            echo "- pubspec.yaml"
+            echo "- gradlew"
+
             echo ""
-            echo "=== STRUKTUR LENGKAP ==="
-            find project_raw -maxdepth 5 -print
+            echo "=== STRUKTUR PROJECT ==="
+
+            find project_raw \
+              -maxdepth 5 \
+              -print | sed -n '1,300p'
+
             exit 1
+
           fi
 
           echo ""
@@ -194,11 +227,11 @@ jobs:
           echo "=========================================="
 
           if [ -f "$PROJECT_DIR/pubspec.yaml" ]; then
-            echo "✅ pubspec.yaml ditemukan"
+            echo "✅ Flutter pubspec.yaml ditemukan"
           fi
 
           if [ -f "$PROJECT_DIR/gradlew" ]; then
-            echo "✅ gradlew ditemukan"
+            echo "✅ Gradle wrapper ditemukan"
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
@@ -212,13 +245,11 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-            # =========================================================
+      # =========================================================
       # ANDROID SDK
       # =========================================================
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: ""
 
       # =========================================================
       # FLUTTER
@@ -237,26 +268,47 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
+          set -Eeuo pipefail
+
           echo "=========================================="
           echo "          PROJECT DETECTION"
           echo "=========================================="
 
           if [ -f "pubspec.yaml" ]; then
+
             echo "PROJECT_TYPE=flutter" >> "$GITHUB_ENV"
+
             echo "✅ Flutter project detected"
 
           elif [ -f "gradlew" ]; then
-            echo "PROJECT_TYPE=gradle" >> "$GITHUB_ENV"
-            echo "✅ Gradle / Android Studio project detected"
 
-          elif find . -maxdepth 3 -name "build.gradle" \
-              -o -name "build.gradle.kts" | grep -q .; then
             echo "PROJECT_TYPE=gradle" >> "$GITHUB_ENV"
+
+            echo "✅ Gradle / Android project detected"
+
+          elif find . \
+              -maxdepth 3 \
+              -type f \
+              \( -name "build.gradle" -o -name "build.gradle.kts" \) \
+              -print -quit | grep -q .; then
+
+            echo "PROJECT_TYPE=gradle" >> "$GITHUB_ENV"
+
             echo "✅ Gradle project detected"
 
           else
+
             echo "❌ Unknown project type"
+
+            echo ""
+            echo "=== PROJECT STRUCTURE ==="
+
+            find . \
+              -maxdepth 4 \
+              -print | sed -n '1,300p'
+
             exit 1
+
           fi
 
       # =========================================================
@@ -267,36 +319,43 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
+          set -Eeuo pipefail
+
           echo "=========================================="
           echo "          FLUTTER ANALYZE"
           echo "=========================================="
 
           flutter pub get
 
+          echo ""
+          echo "=== FLUTTER ANALYZE RESULT ==="
+
           flutter analyze > analyze_report.txt 2>&1 || true
 
-          echo ""
-          echo "[RESULT_ANALYZE]"
           cat analyze_report.txt
-          echo "[END_RESULT_ANALYZE]"
 
           rm -f analyze_report.txt
 
       # =========================================================
-      # GRADLE ANALYZE / CHECK
+      # GRADLE ANALYZE
       # =========================================================
       - name: Analyze Gradle Project
         if: env.PROJECT_TYPE == 'gradle'
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
+          set -Eeuo pipefail
+
           echo "=========================================="
           echo "          GRADLE ANALYZE"
           echo "=========================================="
 
           if [ ! -f "gradlew" ]; then
+
             echo "❌ gradlew tidak ditemukan"
+
             exit 1
+
           fi
 
           chmod +x gradlew
@@ -306,7 +365,7 @@ jobs:
           ./gradlew tasks --no-daemon || true
 
           echo ""
-          echo "Gradle project berhasil dideteksi."
+          echo "✅ Gradle project berhasil dideteksi."
 
       # =========================================================
       # STOP ANALYZE ONLY
@@ -329,6 +388,7 @@ jobs:
       # =========================================================
       - name: Flutter Doctor
         if: env.PROJECT_TYPE == 'flutter'
+        shell: bash
         run: |
           flutter doctor -v
 
@@ -340,6 +400,8 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
+          set -Eeuo pipefail
+
           echo "=========================================="
           echo "          FLUTTER PUB GET"
           echo "=========================================="
@@ -354,6 +416,8 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
+          set -Eeuo pipefail
+
           echo "=========================================="
           echo "          GRADLE DEPENDENCIES"
           echo "=========================================="
@@ -370,6 +434,8 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
+          set -Eeuo pipefail
+
           echo "=========================================="
           echo "          BUILD FLUTTER APK"
           echo "=========================================="
@@ -379,14 +445,23 @@ jobs:
           echo "Build type: $BUILD_TYPE"
 
           if [ "$BUILD_TYPE" = "debug" ]; then
+
+            echo "🚀 Running Flutter debug build..."
+
             flutter build apk --debug
 
           elif [ "$BUILD_TYPE" = "release" ]; then
+
+            echo "🚀 Running Flutter release build..."
+
             flutter build apk --release
 
           else
+
             echo "❌ Build type tidak valid: $BUILD_TYPE"
+
             exit 1
+
           fi
 
       # =========================================================
@@ -397,6 +472,8 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
+          set -Eeuo pipefail
+
           echo "=========================================="
           echo "       BUILD ANDROID / GRADLE APK"
           echo "=========================================="
@@ -408,16 +485,23 @@ jobs:
           echo "Build type: $BUILD_TYPE"
 
           if [ "$BUILD_TYPE" = "debug" ]; then
+
             echo "🚀 Running assembleDebug..."
+
             ./gradlew assembleDebug --no-daemon
 
           elif [ "$BUILD_TYPE" = "release" ]; then
+
             echo "🚀 Running assembleRelease..."
+
             ./gradlew assembleRelease --no-daemon
 
           else
+
             echo "❌ Build type tidak valid!"
+
             exit 1
+
           fi
 
       # =========================================================
@@ -426,6 +510,8 @@ jobs:
       - name: Find APK
         shell: bash
         run: |
+          set -Eeuo pipefail
+
           echo "=========================================="
           echo "             APK SCANNER"
           echo "=========================================="
@@ -436,23 +522,29 @@ jobs:
           find "$GITHUB_WORKSPACE" \
             -type f \
             -name "*.apk" \
-            -print
+            -print > apk_list.txt
 
-          APK_FOUND=$(find "$GITHUB_WORKSPACE" \
-            -type f \
-            -name "*.apk" \
-            -print | head -n 1)
+          cat apk_list.txt
+
+          APK_FOUND=$(sed -n '1p' apk_list.txt)
 
           if [ -z "$APK_FOUND" ]; then
+
             echo ""
             echo "❌ APK tidak ditemukan!"
+
             echo ""
-            echo "=== Folder build ==="
+            echo "=== FOLDER BUILD ==="
+
             find "$GITHUB_WORKSPACE" \
               -type d \
               \( -name build -o -name outputs \) \
-              -print
+              -print | sed -n '1,200p'
+
+            rm -f apk_list.txt
+
             exit 1
+
           fi
 
           echo ""
@@ -465,8 +557,11 @@ jobs:
           echo "APK_NAME=$APK_NAME" >> "$GITHUB_ENV"
 
           echo ""
-          echo "=== APK Info ==="
+          echo "=== APK INFO ==="
+
           ls -lh "$APK_FOUND"
+
+          rm -f apk_list.txt
 
       # =========================================================
       # COPY APK KE OUTPUT
@@ -474,13 +569,16 @@ jobs:
       - name: Prepare APK
         shell: bash
         run: |
+          set -Eeuo pipefail
+
           mkdir -p "$GITHUB_WORKSPACE/output"
 
           cp "$APK_PATH" \
             "$GITHUB_WORKSPACE/output/${{ github.event.inputs.tag }}-${{ github.event.inputs.build_type }}.apk"
 
           echo ""
-          echo "=== Final APK ==="
+          echo "=== FINAL APK ==="
+
           ls -lh "$GITHUB_WORKSPACE/output"
 
       # =========================================================
