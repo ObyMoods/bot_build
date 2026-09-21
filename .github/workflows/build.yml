@@ -1,4 +1,4 @@
-name: Build Flutter APK
+name: Build Flutter / Android APK
 
 on:
   workflow_dispatch:
@@ -13,11 +13,20 @@ on:
         required: true
         type: string
 
-      build_type:
-        description: "debug / release"
+      project_type:
+        description: "Pilih jenis project"
         required: true
-        default: "release"
         type: choice
+        default: flutter
+        options:
+          - flutter
+          - android
+
+      build_type:
+        description: "Pilih mode build"
+        required: true
+        type: choice
+        default: release
         options:
           - debug
           - release
@@ -25,7 +34,7 @@ on:
       only_analyze:
         description: "Hanya jalankan analyze (true/false)"
         required: false
-        default: "false"
+        default: false
         type: boolean
 
 jobs:
@@ -58,24 +67,19 @@ jobs:
           echo "        DOWNLOAD PROJECT ZIP"
           echo "=========================================="
 
-          echo "URL: ${{ github.event.inputs.zip_url }}"
+          echo "Project type : ${{ inputs.project_type }}"
+          echo "Build type   : ${{ inputs.build_type }}"
+          echo "Tag          : ${{ inputs.tag }}"
+          echo "URL          : ${{ inputs.zip_url }}"
 
           curl -fL \
             -H "Authorization: Bearer ${{ secrets.GH_TOKEN }}" \
             -H "Accept: application/octet-stream" \
-            "${{ github.event.inputs.zip_url }}" \
+            "${{ inputs.zip_url }}" \
             -o project.zip
 
-          echo ""
-          echo "=== File Info ==="
           ls -lh project.zip
-
-          echo ""
-          echo "=== File Type ==="
           file project.zip
-
-          echo ""
-          echo "=== ZIP Header ==="
           xxd -l 32 project.zip
 
       # =========================================================
@@ -90,134 +94,93 @@ jobs:
           echo "          EXTRACT PROJECT"
           echo "=========================================="
 
-          echo ""
-          echo "=== FILE INFO ==="
-          ls -lh project.zip
-
-          echo ""
-          echo "=== FILE TYPE ==="
-          file project.zip
-
-          echo ""
-          echo "=== TEST ZIP ==="
-
           if ! unzip -t project.zip; then
-            echo ""
             echo "❌ ZIP GAGAL DIVERIFIKASI!"
-            echo ""
-            echo "=== ZIP HEADER ==="
-            xxd -l 32 project.zip || true
-            echo ""
-            echo "=== FILE TYPE ==="
             file project.zip
+            xxd -l 32 project.zip || true
             exit 1
           fi
 
-          echo ""
           echo "✅ ZIP VALID"
 
           rm -rf project_raw
           mkdir -p project_raw
 
-          echo ""
-          echo "=== EXTRACTING ZIP ==="
-
           unzip -o project.zip -d project_raw
-
-          echo ""
-          echo "✅ EXTRACT BERHASIL"
 
           echo ""
           echo "=== STRUKTUR AWAL ==="
 
-          # Jangan menggunakan head langsung setelah find.
-          # head dapat menyebabkan Broken Pipe.
           find project_raw \
-            -maxdepth 3 \
+            -maxdepth 4 \
             -type f \
-            -print | sed -n '1,100p'
+            -print | sed -n '1,150p'
 
           echo ""
           echo "=== MENCARI PROJECT ROOT ==="
 
           PROJECT_DIR=""
 
-          # -----------------------------------------------------
-          # FLUTTER ROOT LANGSUNG
-          # -----------------------------------------------------
-          if [ -f "project_raw/pubspec.yaml" ]; then
+          if [ "${{ inputs.project_type }}" = "flutter" ]; then
 
-            PROJECT_DIR="project_raw"
+            if [ -f "project_raw/pubspec.yaml" ]; then
+              PROJECT_DIR="project_raw"
+            else
+              PUBSPEC=$(find project_raw \
+                -mindepth 2 \
+                -maxdepth 6 \
+                -type f \
+                -name "pubspec.yaml" \
+                -print -quit || true)
 
-          # -----------------------------------------------------
-          # FLUTTER DI DALAM FOLDER
-          # -----------------------------------------------------
-          else
+              if [ -n "$PUBSPEC" ]; then
+                PROJECT_DIR=$(dirname "$PUBSPEC")
+              fi
+            fi
 
-            PUBSPEC=$(find project_raw \
-              -mindepth 2 \
-              -maxdepth 5 \
-              -type f \
-              -name "pubspec.yaml" \
-              -print -quit || true)
+          elif [ "${{ inputs.project_type }}" = "android" ]; then
 
-            if [ -n "$PUBSPEC" ]; then
+            if [ -f "project_raw/gradlew" ]; then
+              PROJECT_DIR="project_raw"
+            else
+              GRADLEW=$(find project_raw \
+                -mindepth 2 \
+                -maxdepth 6 \
+                -type f \
+                -name "gradlew" \
+                -print -quit || true)
 
-              PROJECT_DIR=$(dirname "$PUBSPEC")
-
+              if [ -n "$GRADLEW" ]; then
+                PROJECT_DIR=$(dirname "$GRADLEW")
+              fi
             fi
 
           fi
 
-          # -----------------------------------------------------
-          # GRADLE ROOT LANGSUNG
-          # -----------------------------------------------------
-          if [ -z "$PROJECT_DIR" ] && [ -f "project_raw/gradlew" ]; then
-
-            PROJECT_DIR="project_raw"
-
-          fi
-
-          # -----------------------------------------------------
-          # GRADLE DI DALAM FOLDER
-          # -----------------------------------------------------
           if [ -z "$PROJECT_DIR" ]; then
+            echo "❌ PROJECT ROOT TIDAK DITEMUKAN!"
 
-            GRADLEW=$(find project_raw \
-              -type f \
-              -name "gradlew" \
-              -print -quit || true)
+            echo ""
+            echo "Project type yang dipilih:"
+            echo "${{ inputs.project_type }}"
 
-            if [ -n "$GRADLEW" ]; then
-
-              PROJECT_DIR=$(dirname "$GRADLEW")
-
+            echo ""
+            echo "Pastikan:"
+            if [ "${{ inputs.project_type }}" = "flutter" ]; then
+              echo "- pubspec.yaml tersedia"
+            else
+              echo "- gradlew tersedia"
+              echo "- atau project Gradle Android memiliki wrapper"
             fi
-
-          fi
-
-          # -----------------------------------------------------
-          # VALIDASI
-          # -----------------------------------------------------
-          if [ -z "$PROJECT_DIR" ]; then
-
-            echo ""
-            echo "❌ PROJECT TIDAK DITEMUKAN!"
-
-            echo ""
-            echo "Mencari:"
-            echo "- pubspec.yaml"
-            echo "- gradlew"
 
             echo ""
             echo "=== STRUKTUR PROJECT ==="
 
             find project_raw \
-              -maxdepth 5 \
+              -maxdepth 6 \
               -print | sed -n '1,300p'
 
             exit 1
-
           fi
 
           echo ""
@@ -226,18 +189,10 @@ jobs:
           echo "$PROJECT_DIR"
           echo "=========================================="
 
-          if [ -f "$PROJECT_DIR/pubspec.yaml" ]; then
-            echo "✅ Flutter pubspec.yaml ditemukan"
-          fi
-
-          if [ -f "$PROJECT_DIR/gradlew" ]; then
-            echo "✅ Gradle wrapper ditemukan"
-          fi
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       # =========================================================
-      # JAVA
+      # JAVA - DIPAKAI FLUTTER & ANDROID
       # =========================================================
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -250,13 +205,12 @@ jobs:
       # =========================================================
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: ""
 
       # =========================================================
-      # FLUTTER
+      # FLUTTER - HANYA UNTUK FLUTTER
       # =========================================================
       - name: Setup Flutter
+        if: ${{ inputs.project_type == 'flutter' }}
         uses: subosito/flutter-action@main
         with:
           flutter-version: "3.41.9"
@@ -264,52 +218,44 @@ jobs:
           cache: true
 
       # =========================================================
-      # DETECT PROJECT TYPE
+      # CHECK PROJECT
       # =========================================================
-      - name: Detect Project Type
+      - name: Check Project
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "=========================================="
-          echo "          PROJECT DETECTION"
+          echo "          PROJECT CONFIGURATION"
           echo "=========================================="
 
-          if [ -f "pubspec.yaml" ]; then
+          echo "Project Type : ${{ inputs.project_type }}"
+          echo "Build Type   : ${{ inputs.build_type }}"
+          echo "Tag          : ${{ inputs.tag }}"
+          echo "Analyze Only : ${{ inputs.only_analyze }}"
+          echo "Project Root : $PWD"
 
-            echo "PROJECT_TYPE=flutter" >> "$GITHUB_ENV"
+          if [ "${{ inputs.project_type }}" = "flutter" ]; then
 
-            echo "✅ Flutter project detected"
+            if [ ! -f "pubspec.yaml" ]; then
+              echo "❌ pubspec.yaml tidak ditemukan!"
+              exit 1
+            fi
 
-          elif [ -f "gradlew" ]; then
-
-            echo "PROJECT_TYPE=gradle" >> "$GITHUB_ENV"
-
-            echo "✅ Gradle / Android project detected"
-
-          elif find . \
-              -maxdepth 3 \
-              -type f \
-              \( -name "build.gradle" -o -name "build.gradle.kts" \) \
-              -print -quit | grep -q .; then
-
-            echo "PROJECT_TYPE=gradle" >> "$GITHUB_ENV"
-
-            echo "✅ Gradle project detected"
+            echo "✅ Flutter project valid"
 
           else
 
-            echo "❌ Unknown project type"
+            if [ ! -f "gradlew" ]; then
+              echo "❌ gradlew tidak ditemukan!"
+              echo "Project Android harus mempunyai Gradle Wrapper."
+              exit 1
+            fi
 
-            echo ""
-            echo "=== PROJECT STRUCTURE ==="
+            chmod +x gradlew
 
-            find . \
-              -maxdepth 4 \
-              -print | sed -n '1,300p'
-
-            exit 1
+            echo "✅ Android/Gradle project valid"
 
           fi
 
@@ -317,7 +263,7 @@ jobs:
       # FLUTTER ANALYZE
       # =========================================================
       - name: Analyze Flutter Project
-        if: env.PROJECT_TYPE == 'flutter'
+        if: ${{ inputs.project_type == 'flutter' }}
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
@@ -332,48 +278,34 @@ jobs:
           echo ""
           echo "=== FLUTTER ANALYZE RESULT ==="
 
-          flutter analyze > analyze_report.txt 2>&1 || true
-
-          cat analyze_report.txt
-
-          rm -f analyze_report.txt
+          flutter analyze
 
       # =========================================================
-      # GRADLE ANALYZE
+      # ANDROID / GRADLE ANALYZE
       # =========================================================
-      - name: Analyze Gradle Project
-        if: env.PROJECT_TYPE == 'gradle'
+      - name: Analyze Android Project
+        if: ${{ inputs.project_type == 'android' }}
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "=========================================="
-          echo "          GRADLE ANALYZE"
+          echo "          ANDROID ANALYZE"
           echo "=========================================="
-
-          if [ ! -f "gradlew" ]; then
-
-            echo "❌ gradlew tidak ditemukan"
-
-            exit 1
-
-          fi
 
           chmod +x gradlew
 
-          echo "Running Gradle validation..."
-
-          ./gradlew tasks --no-daemon || true
+          ./gradlew tasks --no-daemon
 
           echo ""
-          echo "✅ Gradle project berhasil dideteksi."
+          echo "✅ Android Gradle project berhasil divalidasi."
 
       # =========================================================
       # STOP ANALYZE ONLY
       # =========================================================
       - name: Stop if Analyze Only
-        if: ${{ github.event.inputs.only_analyze == 'true' }}
+        if: ${{ inputs.only_analyze == true }}
         shell: bash
         run: |
           echo "=========================================="
@@ -389,7 +321,7 @@ jobs:
       # FLUTTER DOCTOR
       # =========================================================
       - name: Flutter Doctor
-        if: env.PROJECT_TYPE == 'flutter'
+        if: ${{ inputs.project_type == 'flutter' }}
         shell: bash
         run: |
           flutter doctor -v
@@ -398,7 +330,7 @@ jobs:
       # FLUTTER DEPENDENCIES
       # =========================================================
       - name: Flutter Pub Get
-        if: env.PROJECT_TYPE == 'flutter'
+        if: ${{ inputs.project_type == 'flutter' }}
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
@@ -411,17 +343,17 @@ jobs:
           flutter pub get
 
       # =========================================================
-      # GRADLE DEPENDENCIES
+      # ANDROID DEPENDENCIES
       # =========================================================
-      - name: Gradle Dependencies
-        if: env.PROJECT_TYPE == 'gradle'
+      - name: Android Gradle Dependencies
+        if: ${{ inputs.project_type == 'android' }}
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "=========================================="
-          echo "          GRADLE DEPENDENCIES"
+          echo "       ANDROID GRADLE DEPENDENCIES"
           echo "=========================================="
 
           chmod +x gradlew
@@ -432,7 +364,7 @@ jobs:
       # BUILD FLUTTER
       # =========================================================
       - name: Build Flutter APK
-        if: env.PROJECT_TYPE == 'flutter'
+        if: ${{ inputs.project_type == 'flutter' }}
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
@@ -442,66 +374,60 @@ jobs:
           echo "          BUILD FLUTTER APK"
           echo "=========================================="
 
-          BUILD_TYPE="${{ github.event.inputs.build_type }}"
+          BUILD_TYPE="${{ inputs.build_type }}"
 
           echo "Build type: $BUILD_TYPE"
 
           if [ "$BUILD_TYPE" = "debug" ]; then
 
-            echo "🚀 Running Flutter debug build..."
-
+            echo "🚀 Flutter DEBUG"
             flutter build apk --debug
 
           elif [ "$BUILD_TYPE" = "release" ]; then
 
-            echo "🚀 Running Flutter release build..."
-
+            echo "🚀 Flutter RELEASE"
             flutter build apk --release
 
           else
 
             echo "❌ Build type tidak valid: $BUILD_TYPE"
-
             exit 1
 
           fi
 
       # =========================================================
-      # BUILD ANDROID / GRADLE
+      # BUILD ANDROID STUDIO / GRADLE
       # =========================================================
-      - name: Build Android Gradle APK
-        if: env.PROJECT_TYPE == 'gradle'
+      - name: Build Android Studio APK
+        if: ${{ inputs.project_type == 'android' }}
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "=========================================="
-          echo "       BUILD ANDROID / GRADLE APK"
+          echo "       BUILD ANDROID STUDIO APK"
           echo "=========================================="
 
           chmod +x gradlew
 
-          BUILD_TYPE="${{ github.event.inputs.build_type }}"
+          BUILD_TYPE="${{ inputs.build_type }}"
 
           echo "Build type: $BUILD_TYPE"
 
           if [ "$BUILD_TYPE" = "debug" ]; then
 
-            echo "🚀 Running assembleDebug..."
-
+            echo "🚀 Android Studio DEBUG"
             ./gradlew assembleDebug --no-daemon
 
           elif [ "$BUILD_TYPE" = "release" ]; then
 
-            echo "🚀 Running assembleRelease..."
-
+            echo "🚀 Android Studio RELEASE"
             ./gradlew assembleRelease --no-daemon
 
           else
 
             echo "❌ Build type tidak valid!"
-
             exit 1
 
           fi
@@ -518,15 +444,15 @@ jobs:
           echo "             APK SCANNER"
           echo "=========================================="
 
-          echo ""
-          echo "Mencari semua APK..."
-
           find "$GITHUB_WORKSPACE" \
             -type f \
             -name "*.apk" \
             -print > apk_list.txt
 
-          cat apk_list.txt
+          echo ""
+          echo "=== APK YANG DITEMUKAN ==="
+
+          cat apk_list.txt || true
 
           APK_FOUND=$(sed -n '1p' apk_list.txt)
 
@@ -543,10 +469,7 @@ jobs:
               \( -name build -o -name outputs \) \
               -print | sed -n '1,200p'
 
-            rm -f apk_list.txt
-
             exit 1
-
           fi
 
           echo ""
@@ -557,9 +480,6 @@ jobs:
 
           echo "APK_PATH=$APK_FOUND" >> "$GITHUB_ENV"
           echo "APK_NAME=$APK_NAME" >> "$GITHUB_ENV"
-
-          echo ""
-          echo "=== APK INFO ==="
 
           ls -lh "$APK_FOUND"
 
@@ -575,8 +495,10 @@ jobs:
 
           mkdir -p "$GITHUB_WORKSPACE/output"
 
+          FINAL_NAME="${{ inputs.tag }}-${{ inputs.project_type }}-${{ inputs.build_type }}.apk"
+
           cp "$APK_PATH" \
-            "$GITHUB_WORKSPACE/output/${{ github.event.inputs.tag }}-${{ github.event.inputs.build_type }}.apk"
+            "$GITHUB_WORKSPACE/output/$FINAL_NAME"
 
           echo ""
           echo "=== FINAL APK ==="
@@ -589,7 +511,7 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: flutter-${{ github.event.inputs.build_type }}-${{ github.event.inputs.tag }}
+          name: ${{ inputs.project_type }}-${{ inputs.build_type }}-${{ inputs.tag }}
           path: output/*.apk
           retention-days: 1
           if-no-files-found: error
