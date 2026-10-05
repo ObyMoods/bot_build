@@ -203,7 +203,7 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      # =========================================================
+            # =========================================================
       # JAVA
       # =========================================================
       - name: Setup Java
@@ -211,6 +211,34 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+
+      # =========================================================
+      # ANDROID SHA-1 / SHA-256
+      # =========================================================
+      - name: Get Android SHA Fingerprints
+        if: ${{ inputs.project_type == 'android' }}
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "=========================================="
+          echo "       ANDROID SHA FINGERPRINTS"
+          echo "=========================================="
+
+          chmod +x gradlew
+
+          ./gradlew signingReport --no-daemon
+
+          echo ""
+          echo "=========================================="
+          echo "       SHA SELESAI DITAMPILKAN"
+          echo "=========================================="
+          echo ""
+          echo "Cari:"
+          echo "SHA1:"
+          echo "SHA-256:"
+          echo "=========================================="
 
       # =========================================================
       # ANDROID SDK
