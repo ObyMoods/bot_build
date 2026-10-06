@@ -54,9 +54,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
-        
+
       # =========================================================
-      # DOWNLOAD
+      # DOWNLOAD ZIP
       # =========================================================
       - name: Download ZIP project
         shell: bash
@@ -82,12 +82,13 @@ jobs:
           test -s project.zip
 
           echo ""
-          echo "=== PROJECT ZIP ==="
+          echo "=== ZIP INFO ==="
+
           ls -lh project.zip
           file project.zip
 
       # =========================================================
-      # VERIFY + EXTRACT
+      # VERIFY + EXTRACT ZIP
       # =========================================================
       - name: Extract ZIP
         shell: bash
@@ -103,14 +104,18 @@ jobs:
           unzip -t project.zip
 
           rm -rf project_raw
+
           mkdir -p project_raw
 
           echo ""
           echo "=== EXTRACTING ==="
 
           set +e
+
           unzip -o project.zip -d project_raw
+
           UNZIP_STATUS=$?
+
           set -e
 
           echo ""
@@ -121,7 +126,12 @@ jobs:
             echo "Melanjutkan karena ZIP sudah lolos unzip -t."
           fi
 
-          FILE_COUNT=$(find project_raw -type f | wc -l | tr -d ' ')
+          FILE_COUNT=$(
+            find project_raw \
+              -type f \
+              | wc -l \
+              | tr -d ' '
+          )
 
           if [ "$FILE_COUNT" -eq 0 ]; then
             echo "❌ Tidak ada file yang berhasil diekstrak!"
@@ -132,15 +142,16 @@ jobs:
           echo "✅ File extracted: $FILE_COUNT"
 
           echo ""
-          echo "=== STRUKTUR PROJECT ==="
+          echo "=== PROJECT STRUCTURE ==="
 
           find project_raw \
             -maxdepth 5 \
             -type f \
-            -print | sed -n '1,250p'
+            -print \
+            | sed -n '1,250p'
 
       # =========================================================
-      # FIND PROJECT ROOT
+      # DETECT PROJECT ROOT
       # =========================================================
       - name: Detect Project Root
         shell: bash
@@ -153,18 +164,26 @@ jobs:
 
           PROJECT_DIR=""
 
+          # =====================================================
+          # FLUTTER
+          # =====================================================
           if [ "${{ inputs.project_type }}" = "flutter" ]; then
 
             echo "Mencari pubspec.yaml..."
 
             if [ -f "project_raw/pubspec.yaml" ]; then
+
               PROJECT_DIR="project_raw"
+
             else
 
-              PUBSPEC=$(find project_raw \
-                -type f \
-                -name "pubspec.yaml" \
-                -print -quit || true)
+              PUBSPEC=$(
+                find project_raw \
+                  -type f \
+                  -name "pubspec.yaml" \
+                  -print -quit \
+                  || true
+              )
 
               if [ -n "$PUBSPEC" ]; then
                 PROJECT_DIR="$(dirname "$PUBSPEC")"
@@ -172,39 +191,88 @@ jobs:
 
             fi
 
+          # =====================================================
+          # ANDROID / CAPACITOR
+          # =====================================================
           else
 
-            echo "Mencari Android/Gradle project..."
+            echo "Mencari Android / Capacitor project..."
 
-            if [ -f "project_raw/gradlew" ]; then
+            # ---------------------------------------------------
+            # PRIORITAS 1: CAPACITOR
+            # ---------------------------------------------------
 
-              PROJECT_DIR="project_raw"
-
-            else
-
-              GRADLEW=$(find project_raw \
+            CAP_CONFIG=$(
+              find project_raw \
                 -type f \
-                -name "gradlew" \
-                -print -quit || true)
+                \( \
+                  -name "capacitor.config.json" \
+                  -o -name "capacitor.settings.gradle" \
+                  -o -name "capacitor.config.js" \
+                  -o -name "capacitor.config.ts" \
+                \) \
+                -print -quit \
+                || true
+            )
 
-              if [ -n "$GRADLEW" ]; then
-                PROJECT_DIR="$(dirname "$GRADLEW")"
+            if [ -n "$CAP_CONFIG" ]; then
+
+              PROJECT_DIR="$(dirname "$CAP_CONFIG")"
+
+              echo ""
+              echo "✅ Capacitor project ditemukan:"
+              echo "$PROJECT_DIR"
+
+            fi
+
+            # ---------------------------------------------------
+            # PRIORITAS 2: ROOT GRADLE
+            # ---------------------------------------------------
+
+            if [ -z "$PROJECT_DIR" ]; then
+
+              echo ""
+              echo "Capacitor tidak ditemukan."
+              echo "Mencari Gradle project..."
+
+              if [ -f "project_raw/gradlew" ]; then
+
+                PROJECT_DIR="project_raw"
+
+              else
+
+                GRADLEW=$(
+                  find project_raw \
+                    -type f \
+                    -name "gradlew" \
+                    -print -quit \
+                    || true
+                )
+
+                if [ -n "$GRADLEW" ]; then
+                  PROJECT_DIR="$(dirname "$GRADLEW")"
+                fi
+
               fi
 
             fi
 
             # ---------------------------------------------------
-            # Fallback jika gradlew tidak ditemukan
+            # PRIORITAS 3: settings.gradle
             # ---------------------------------------------------
+
             if [ -z "$PROJECT_DIR" ]; then
 
-              GRADLE_BUILD=$(find project_raw \
-                -type f \
-                \( \
-                  -name "settings.gradle" \
-                  -o -name "settings.gradle.kts" \
-                \) \
-                -print -quit || true)
+              GRADLE_BUILD=$(
+                find project_raw \
+                  -type f \
+                  \( \
+                    -name "settings.gradle" \
+                    -o -name "settings.gradle.kts" \
+                  \) \
+                  -print -quit \
+                  || true
+              )
 
               if [ -n "$GRADLE_BUILD" ]; then
                 PROJECT_DIR="$(dirname "$GRADLE_BUILD")"
@@ -214,12 +282,14 @@ jobs:
 
           fi
 
+          # =====================================================
+          # VALIDATE
+          # =====================================================
+
           if [ -z "$PROJECT_DIR" ]; then
 
             echo ""
             echo "❌ PROJECT ROOT TIDAK DITEMUKAN!"
-
-            echo "Platform: ${{ inputs.project_type }}"
 
             echo ""
             echo "=== CANDIDATE FILES ==="
@@ -231,8 +301,13 @@ jobs:
                 -o -name "gradlew" \
                 -o -name "settings.gradle" \
                 -o -name "settings.gradle.kts" \
+                -o -name "capacitor.config.json" \
+                -o -name "capacitor.settings.gradle" \
+                -o -name "capacitor.config.js" \
+                -o -name "capacitor.config.ts" \
               \) \
-              -print | sed -n '1,100p'
+              -print \
+              | sed -n '1,150p'
 
             exit 1
 
@@ -247,15 +322,7 @@ jobs:
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       # =========================================================
-      # PREPARE CAPACITOR ANDROID
-      #
-      # Memperbaiki project Capacitor yang kehilangan:
-      #
-      # android/capacitor-cordova-android-plugins/
-      # android/capacitor-cordova-android-plugins/cordova.variables.gradle
-      #
-      # Sync dilakukan dari ROOT project Capacitor,
-      # bukan dari folder android.
+      # PREPARE CAPACITOR
       # =========================================================
       - name: Prepare Capacitor Android
         if: ${{ inputs.project_type == 'android' }}
@@ -285,15 +352,17 @@ jobs:
               -type f \
               \( \
                 -name "capacitor.config.json" \
+                -o -name "capacitor.settings.gradle" \
                 -o -name "capacitor.config.js" \
                 -o -name "capacitor.config.ts" \
               \) \
               -print
           )
 
-          # ---------------------------------------------------
-          # Jika bukan project Capacitor
-          # ---------------------------------------------------
+          # =====================================================
+          # BUKAN CAPACITOR
+          # =====================================================
+
           if [ -z "$CAP_PROJECT_DIR" ]; then
 
             echo ""
@@ -311,10 +380,9 @@ jobs:
 
           cd "$CAP_PROJECT_DIR"
 
-          # ---------------------------------------------------
-          # Verify package.json
-          # ---------------------------------------------------
-          test -f package.json
+          # =====================================================
+          # NODE DEPENDENCIES
+          # =====================================================
 
           echo ""
           echo "=========================================="
@@ -337,19 +405,21 @@ jobs:
 
           fi
 
-          # ---------------------------------------------------
-          # Capacitor CLI
-          # ---------------------------------------------------
+          # =====================================================
+          # CAPACITOR VERSION
+          # =====================================================
+
           echo ""
           echo "=========================================="
           echo "          CAPACITOR VERSION"
           echo "=========================================="
 
-          npx cap --version || true
+          npx cap --version
 
-          # ---------------------------------------------------
-          # Capacitor Sync
-          # ---------------------------------------------------
+          # =====================================================
+          # CAPACITOR SYNC
+          # =====================================================
+
           echo ""
           echo "=========================================="
           echo "          CAPACITOR SYNC ANDROID"
@@ -357,52 +427,152 @@ jobs:
 
           npx cap sync android
 
-          # ---------------------------------------------------
-          # Verify generated files
-          # ---------------------------------------------------
+          # =====================================================
+          # VERIFY ANDROID
+          # =====================================================
+
           echo ""
           echo "=========================================="
-          echo "       VERIFY GENERATED FILES"
+          echo "       VERIFY CAPACITOR OUTPUT"
           echo "=========================================="
 
-          ANDROID_DIR="$CAP_PROJECT_DIR/android"
+          echo ""
+          echo "Current directory:"
+          pwd
 
-          if [ -d "$ANDROID_DIR" ]; then
-            echo "✅ android/ ditemukan."
+          echo ""
+          echo "Project contents:"
+          ls -la
+
+          ANDROID_DIR=""
+
+          # Normal Capacitor path
+          if [ -d "$CAP_PROJECT_DIR/android" ]; then
+
+            ANDROID_DIR="$CAP_PROJECT_DIR/android"
+
           else
-            echo "❌ Folder android/ tidak ditemukan setelah cap sync!"
-            exit 1
+
+            # Fallback cari gradlew
+            FOUND_GRADLEW=$(
+              find "$CAP_PROJECT_DIR" \
+                -maxdepth 4 \
+                -type f \
+                -name "gradlew" \
+                -print -quit \
+                || true
+            )
+
+            if [ -n "$FOUND_GRADLEW" ]; then
+              ANDROID_DIR="$(dirname "$FOUND_GRADLEW")"
+            fi
+
           fi
 
-          if [ -f "$ANDROID_DIR/capacitor-cordova-android-plugins/cordova.variables.gradle" ]; then
-
-            echo "✅ cordova.variables.gradle ditemukan."
-
-          else
-
-            echo "⚠️ cordova.variables.gradle tidak ditemukan."
+          if [ -z "$ANDROID_DIR" ]; then
 
             echo ""
-            echo "Kemungkinan project tidak mempunyai Cordova plugin."
-            echo "Melanjutkan build."
+            echo "❌ Folder Android tidak ditemukan!"
+
+            echo ""
+            echo "=== CARI GRADLEW ==="
+
+            find "$CAP_PROJECT_DIR" \
+              -type f \
+              -name "gradlew" \
+              -print \
+              || true
+
+            echo ""
+            echo "=== CARI SETTINGS GRADLE ==="
+
+            find "$CAP_PROJECT_DIR" \
+              -type f \
+              \( \
+                -name "settings.gradle" \
+                -o -name "settings.gradle.kts" \
+              \) \
+              -print \
+              || true
+
+            echo ""
+            echo "=== PROJECT TREE ==="
+
+            find "$CAP_PROJECT_DIR" \
+              -maxdepth 5 \
+              -print \
+              | sed -n '1,300p'
+
+            exit 1
 
           fi
 
           echo ""
-          echo "=== GENERATED CAPACITOR FILES ==="
+          echo "✅ Android directory ditemukan:"
+          echo "$ANDROID_DIR"
 
-          find "$ANDROID_DIR" \
-            -maxdepth 4 \
-            -type f \
-            \( \
-              -name "capacitor.variables.gradle" \
-              -o -name "cordova.variables.gradle" \
-              -o -name "capacitor.build.gradle" \
-            \) \
-            -print | sort || true
+          echo "CAP_ANDROID_DIR=$ANDROID_DIR" >> "$GITHUB_ENV"
+
+          # =====================================================
+          # VERIFY GRADLE WRAPPER
+          # =====================================================
+
+          if [ -f "$ANDROID_DIR/gradlew" ]; then
+
+            echo "✅ gradlew ditemukan."
+
+            chmod +x "$ANDROID_DIR/gradlew"
+
+          else
+
+            echo ""
+            echo "❌ gradlew tidak ditemukan:"
+            echo "$ANDROID_DIR/gradlew"
+
+            exit 1
+
+          fi
+
+          # =====================================================
+          # VERIFY CORDOVA GENERATED FILE
+          # =====================================================
+
+          CORDOVA_FILE="$ANDROID_DIR/capacitor-cordova-android-plugins/cordova.variables.gradle"
+
+          if [ -f "$CORDOVA_FILE" ]; then
+
+            echo ""
+            echo "✅ cordova.variables.gradle ditemukan:"
+            echo "$CORDOVA_FILE"
+
+          else
+
+            echo ""
+            echo "ℹ️ cordova.variables.gradle tidak ditemukan."
+
+            echo "Project mungkin tidak menggunakan Cordova plugins."
+
+          fi
 
           echo ""
-          echo "✅ Capacitor preparation selesai."
+          echo "=== CAPACITOR GENERATED FILES ==="
+
+          find "$ANDROID_DIR" \
+            -type f \
+            \( \
+              -name "cordova.variables.gradle" \
+              -o -name "variables.gradle" \
+              -o -name "capacitor.variables.gradle" \
+              -o -name "capacitor.build.gradle" \
+            \) \
+            -print \
+            | sort \
+            || true
+
+          echo ""
+          echo "=========================================="
+          echo "       CAPACITOR PREPARATION OK"
+          echo "=========================================="
 
       # =========================================================
       # JAVA
@@ -436,7 +606,6 @@ jobs:
       # CHECK PROJECT
       # =========================================================
       - name: Check Project
-        working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -449,31 +618,87 @@ jobs:
           echo "Build    : ${{ inputs.build_type }}"
           echo "Tag      : ${{ inputs.tag }}"
           echo "Analyze  : ${{ inputs.only_analyze }}"
-          echo "Root     : $PWD"
+          echo "Root     : $PROJECT_DIR"
+
+          # =====================================================
+          # FLUTTER
+          # =====================================================
 
           if [ "${{ inputs.project_type }}" = "flutter" ]; then
 
-            test -f pubspec.yaml || {
+            cd "$PROJECT_DIR"
+
+            if [ ! -f pubspec.yaml ]; then
+
               echo "❌ pubspec.yaml tidak ditemukan!"
-              exit 1
-            }
-
-            echo "✅ Flutter project valid"
-
-          else
-
-            if [ ! -f gradlew ]; then
-
-              echo "❌ gradlew tidak ditemukan!"
-              echo "Project Android harus menyertakan Gradle Wrapper."
 
               exit 1
 
             fi
 
-            chmod +x gradlew
+            echo "✅ Flutter project valid"
 
-            echo "✅ Android/Gradle project valid"
+          # =====================================================
+          # ANDROID
+          # =====================================================
+
+          else
+
+            # Capacitor
+            if [ -n "${CAP_ANDROID_DIR:-}" ]; then
+
+              ANDROID_BUILD_DIR="$CAP_ANDROID_DIR"
+
+            else
+
+              # Android Gradle biasa
+              if [ -f "$PROJECT_DIR/gradlew" ]; then
+
+                ANDROID_BUILD_DIR="$PROJECT_DIR"
+
+              else
+
+                FOUND_GRADLEW=$(
+                  find "$PROJECT_DIR" \
+                    -maxdepth 3 \
+                    -type f \
+                    -name "gradlew" \
+                    -print -quit \
+                    || true
+                )
+
+                if [ -z "$FOUND_GRADLEW" ]; then
+
+                  echo "❌ gradlew tidak ditemukan!"
+
+                  exit 1
+
+                fi
+
+                ANDROID_BUILD_DIR="$(dirname "$FOUND_GRADLEW")"
+
+              fi
+
+            fi
+
+            echo ""
+            echo "Android build directory:"
+            echo "$ANDROID_BUILD_DIR"
+
+            if [ ! -f "$ANDROID_BUILD_DIR/gradlew" ]; then
+
+              echo "❌ gradlew tidak ditemukan:"
+              echo "$ANDROID_BUILD_DIR/gradlew"
+
+              exit 1
+
+            fi
+
+            chmod +x "$ANDROID_BUILD_DIR/gradlew"
+
+            echo "ANDROID_BUILD_DIR=$ANDROID_BUILD_DIR" >> "$GITHUB_ENV"
+
+            echo "✅ Android project valid"
 
           fi
 
@@ -488,6 +713,7 @@ jobs:
           set -Eeuo pipefail
 
           flutter pub get
+
           flutter analyze
 
       # =========================================================
@@ -495,16 +721,17 @@ jobs:
       # =========================================================
       - name: Analyze Android
         if: ${{ inputs.project_type == 'android' }}
-        working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          chmod +x gradlew
+          chmod +x "$ANDROID_BUILD_DIR/gradlew"
 
           echo "=========================================="
           echo "          ANDROID ANALYZE"
           echo "=========================================="
+
+          cd "$ANDROID_BUILD_DIR"
 
           ./gradlew tasks \
             --no-daemon \
@@ -525,7 +752,7 @@ jobs:
           echo "Build APK dilewati."
 
       # =========================================================
-      # FLUTTER DEPENDENCIES
+      # FLUTTER PUB GET
       # =========================================================
       - name: Flutter Pub Get
         if: ${{ inputs.project_type == 'flutter' && !inputs.only_analyze }}
@@ -537,20 +764,21 @@ jobs:
           flutter pub get
 
       # =========================================================
-      # ANDROID DEPENDENCIES
+      # ANDROID GRADLE DEPENDENCIES
       # =========================================================
       - name: Android Gradle Dependencies
         if: ${{ inputs.project_type == 'android' && !inputs.only_analyze }}
-        working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          chmod +x gradlew
+          chmod +x "$ANDROID_BUILD_DIR/gradlew"
 
           echo "=========================================="
           echo "      ANDROID GRADLE DEPENDENCIES"
           echo "=========================================="
+
+          cd "$ANDROID_BUILD_DIR"
 
           ./gradlew dependencies \
             --no-daemon \
@@ -595,25 +823,34 @@ jobs:
           esac
 
       # =========================================================
-      # BUILD ANDROID STUDIO / GRADLE
+      # BUILD ANDROID / CAPACITOR
       # =========================================================
-      - name: Build Android Studio APK
+      - name: Build Android APK
         if: ${{ inputs.project_type == 'android' && !inputs.only_analyze }}
-        working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          chmod +x gradlew
+          chmod +x "$ANDROID_BUILD_DIR/gradlew"
+
+          cd "$ANDROID_BUILD_DIR"
 
           echo "=========================================="
           echo "          BUILD ANDROID APK"
           echo "=========================================="
 
+          echo "Android directory:"
+          pwd
+
+          echo ""
+          echo "Build type:"
+          echo "${{ inputs.build_type }}"
+
           case "${{ inputs.build_type }}" in
 
             debug)
 
+              echo ""
               echo "🚀 Building Android DEBUG..."
 
               ./gradlew assembleDebug \
@@ -624,6 +861,7 @@ jobs:
 
             release)
 
+              echo ""
               echo "🚀 Building Android RELEASE..."
 
               ./gradlew assembleRelease \
@@ -659,7 +897,8 @@ jobs:
             find "$GITHUB_WORKSPACE" \
               -type f \
               -name "*.apk" \
-              -print
+              -print \
+              | sort
           )
 
           if [ "${#APKS[@]}" -eq 0 ]; then
@@ -675,23 +914,75 @@ jobs:
                 -name build \
                 -o -name outputs \
               \) \
-              -print | sed -n '1,200p'
+              -print \
+              | sed -n '1,250p'
+
+            echo ""
+            echo "=== ALL APK CANDIDATES ==="
+
+            find "$GITHUB_WORKSPACE" \
+              -type f \
+              | grep -Ei '\.apk$' \
+              || true
 
             exit 1
 
           fi
 
+          echo ""
           echo "APK ditemukan:"
 
           printf '%s\n' "${APKS[@]}"
 
-          APK_FOUND="${APKS[0]}"
+          # =====================================================
+          # PILIH APK
+          # =====================================================
+
+          APK_FOUND=""
+
+          if [ "${{ inputs.build_type }}" = "release" ]; then
+
+            for apk in "${APKS[@]}"; do
+
+              if [[ "$apk" == *"release"* ]]; then
+
+                APK_FOUND="$apk"
+                break
+
+              fi
+
+            done
+
+          else
+
+            for apk in "${APKS[@]}"; do
+
+              if [[ "$apk" == *"debug"* ]]; then
+
+                APK_FOUND="$apk"
+                break
+
+              fi
+
+            done
+
+          fi
+
+          # Fallback
+          if [ -z "$APK_FOUND" ]; then
+            APK_FOUND="${APKS[0]}"
+          fi
+
+          echo ""
+          echo "APK terpilih:"
+          echo "$APK_FOUND"
 
           echo "APK_PATH=$APK_FOUND" >> "$GITHUB_ENV"
+
           echo "APK_NAME=$(basename "$APK_FOUND")" >> "$GITHUB_ENV"
 
           echo ""
-          echo "Selected APK:"
+
           ls -lh "$APK_FOUND"
 
       # =========================================================
