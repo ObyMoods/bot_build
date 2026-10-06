@@ -212,68 +212,6 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-            # =========================================================
-      # ANDROID SHA-1 / SHA-256
-      # =========================================================
-      - name: Generate Debug Keystore + Get SHA
-        if: ${{ inputs.project_type == 'android' }}
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          echo "=========================================="
-          echo "     GENERATE ANDROID DEBUG KEYSTORE"
-          echo "=========================================="
-
-          mkdir -p "$HOME/.android"
-
-          DEBUG_KEYSTORE="$HOME/.android/debug.keystore"
-
-          if [ ! -f "$DEBUG_KEYSTORE" ]; then
-            echo "🔐 Debug keystore belum ada. Membuat..."
-
-            keytool -genkeypair \
-              -v \
-              -keystore "$DEBUG_KEYSTORE" \
-              -storepass android \
-              -alias AndroidDebugKey \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
-
-            echo "✅ Debug keystore berhasil dibuat."
-          else
-            echo "✅ Debug keystore sudah tersedia."
-          fi
-
-          chmod +x gradlew
-
-          echo ""
-          echo "=========================================="
-          echo "       SHA-1 / SHA-256"
-          echo "=========================================="
-
-          keytool -list -v \
-            -keystore "$DEBUG_KEYSTORE" \
-            -alias AndroidDebugKey \
-            -storepass android \
-            -keypass android \
-            | grep -E "Alias name:|SHA1:|SHA256:|SHA-256:"
-
-          echo ""
-          echo "=========================================="
-          echo "       GRADLE SIGNING REPORT"
-          echo "=========================================="
-
-          ./gradlew signingReport --no-daemon
-
-          echo ""
-          echo "=========================================="
-          echo "       SHA SELESAI"
-          echo "=========================================="
 
       # =========================================================
       # ANDROID SDK
